@@ -3,10 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import colors
 from mpl_toolkits.axes_grid1 import Divider, Size
-import pickle
 import scipy.linalg
-import numpy as np
-import matplotlib.pyplot as plt
 
 DEG = np.pi/180
 s0 = np.eye(2)
@@ -16,8 +13,6 @@ sy = np.array([[0, -1j],
                [1j, 0]])
 sz = np.array([[1, 0],
                [0,-1]])
-
-DEG = np.pi/180
 
 # 
 def func_U(t_q2, t_q3, t_q20, t_q30, t_q2_res, theta_in, A, B, fq2, fq3 ):
@@ -40,10 +35,12 @@ def func_U(t_q2, t_q3, t_q20, t_q30, t_q2_res, theta_in, A, B, fq2, fq3 ):
     return U323
 
 def func2(t_q2, t_q3, t_q20, t_q30, t_q2_res, theta_in, A, B, fq2, fq3 ):      
-    init_state = np.array([0, 1])
+    init_state = np.array([0, 1]) # Initial state |1> (spin-down)
     U323 = func_U(t_q2, t_q3, t_q20, t_q30, t_q2_res, theta_in, A, B, fq2, fq3 )
-    stateN = U323 @ U323 @ init_state
-    return (np.real(np.abs(stateN[0]))**2   ) * A + B
+    stateN = U323 @ U323 @ init_state # Apply the pi/2 single-qubit gate twice
+    # Probability of being in the |0> state (spin-up)
+    Pup = (np.real(np.abs(stateN[0]))**2 ) * A + B
+    return Pup
 
 def func2_wrap(M, *args):
     x, y = M
@@ -58,10 +55,7 @@ def func2_SU2decompose(mat):
     uy = np.imag( np.trace( mat @ sy )/2  )
     uz = np.imag( np.trace( mat @ sz )/2  )
     
-    U = s0* u0 +  (ux*sx + uy*sy + uz*sz) 
     uvec = np.array([ux, uy, uz])
-    # if  i==0:
-    #     print(  np.sqrt(np.sum(uvec**2))  )    
     if np.sqrt(np.sum(uvec**2)) <= 1e-14:
         uvec = np.array([0,0,1])
     else:
@@ -70,58 +64,67 @@ def func2_SU2decompose(mat):
     gate_polar_angle = np.arctan2( np.sqrt(uvec[0]**2 + uvec[1]**2), uvec[2]   ) 
     return gate_polar_angle, rot_angle
 
-#
-popt = [-2.28847019, -1.54215921,  1.1601954,  44.71842756,  0.84173585,  0.08989211,  0.070926,  0.06203767] # fitted parameters from Chien-An
+# Fitted parameters from Chien-An
+t_q20 = -2.28847019
+t_q30 = -1.54215921
+t_q2_res = 1.1601954
+theta_in = 44.71842756
+A = 0.84173585
+B = 0.08989211
+fq2 = 0.070926
+fq3 = 0.06203767
+popt = [t_q20, t_q30,  t_q2_res,  theta_in,  A,  B,  fq2,  fq3 ]
 
+# Define the range for t_q2 and t_q3
 t_q2s = np.linspace(0, 30, 120)
 t_q3s = np.linspace(0, 30, 120)
 
-gate_polar_angles = np.zeros( (len(t_q2s), len(t_q3s), ) )
-rot_angles = np.zeros( (len(t_q2s), len(t_q3s), ) )
+# Initialize arrays to store results
+gate_polar_angles = np.zeros( (len(t_q2s), len(t_q3s)) )
+rot_angles = np.zeros( (len(t_q2s), len(t_q3s)) )
+Pups = np.zeros( (len(t_q2s), len(t_q3s)) )
 
-Pups = np.zeros( (len(t_q2s), len(t_q3s), ) )
+# Calculate Pups and gate parameters for each combination of t_q2 and t_q3
+print("Calculating Pups and gate parameters...")
 for i2 in range(len(t_q2s)):
     for i3 in range(len(t_q3s)):
-        # U323 = func_U(t_q2s[i2], t_q3s[i3], *popt)
-        gate_polar_angle, rot_angle = func2_SU2decompose(func_U(t_q2s[i2], t_q3s[i3], *popt))
+        U_matrix = func_U(t_q2s[i2], t_q3s[i3], *popt)
+        gate_polar_angle, rot_angle = func2_SU2decompose(U_matrix)
         Pup = func2(t_q2s[i2], t_q3s[i3],  *popt)
         gate_polar_angles[i2, i3] = gate_polar_angle
         rot_angles[i2, i3] = rot_angle
         Pups[i2, i3] = Pup
+print("Calculation complete.")
 
-fig = plt.figure( figsize=(7,3.5))
-h = [Size.Fixed(1), Size.Fixed(1.3), Size.Fixed(1), Size.Fixed(1.3)]
-v = [Size.Fixed(0.5), Size.Fixed(1.3)]
+# --- Plotting Pups with contours ---
+fig, ax = plt.subplots(figsize=(8, 6))
 
-divider = Divider(fig, (0, 0, 1, 1), h, v, aspect=False)
-ax11 = fig.add_axes(divider.get_position(),
-                   axes_locator=divider.new_locator(nx=1, ny=1))
-# ax31 = fig.add_axes(divider.get_position(),
-#                    axes_locator=divider.new_locator(nx=3, ny=1))
+# Use pcolormesh for a 2D plot of Pups
+im = ax.pcolormesh(t_q2s, t_q3s, Pups.T, shading='auto', cmap='viridis') # Transpose Pups for correct orientation
 
-ax = ax11
+# Add a color bar
+cbar = fig.colorbar(im, ax=ax, orientation='vertical')
+cbar.set_label('Spin-Up Probability (Pups)')
 
-# ax.set_xticks([0,  15, 30])
-# ax.set_yticks([0,  15, 30])
-# ax.set_xlabel(r'$\rm t_2 (ns)$')
-# ax.set_ylabel(r'$\rm t_3 (ns)$')
+# Add contours
+cs = ax.contour( t_q2s, t_q3s, gate_polar_angles.T/DEG, levels=[90,] , colors='C9' , linewidths=[0.5,]  )
+cs = ax.contour( t_q2s, t_q3s, rot_angles.T/DEG, levels=[90,]  , colors='C1' , linewidths=[0.5,] )    
+cs = ax.contour( t_q2s, t_q3s, rot_angles.T/DEG, levels=[270,]  , colors='C0' , linewidths=[0.5,] ) 
 
-# ax = ax31
-
-
-ax.set_xticks([0,  15, 30])
-ax.set_yticks([0,  15, 30])
+# Set labels and title
 ax.set_xlabel(r'$\rm t_2 (ns)$')
 ax.set_ylabel(r'$\rm t_3 (ns)$')
+ax.set_title('Simulated Spin-Up Probability (Pups) with Contours')
 
+# Set ticks (optional, as pcolormesh handles it well)
+ax.set_xticks(np.arange(0, 31, 5))
+ax.set_yticks(np.arange(0, 31, 5))
 
-cs = plt.contour( t_q2s, t_q3s, gate_polar_angles.T/DEG, levels=[90,] , colors='C9' , linewidths=[0.5,]  )
-cs = plt.contour( t_q2s, t_q3s, rot_angles.T/DEG, levels=[90,]  , colors='C1' , linewidths=[0.5,] )    
-cs = plt.contour( t_q2s, t_q3s, rot_angles.T/DEG, levels=[270,]  , colors='C0' , linewidths=[0.5,] ) 
+# Ensure tight layout
+plt.tight_layout()
+plt.show()
 
-# plt.figure(2)
+# The following lines from the original code are for debugging/printing specific values.
 print(func_U(10, 10, *popt))
 print(func2(10, 10, *popt))
 print(func2_SU2decompose(func_U(10, 10, *popt))[0]*180/np.pi, func2_SU2decompose(func_U(10, 10, *popt))[1]*180/np.pi)
-
-plt.show()
