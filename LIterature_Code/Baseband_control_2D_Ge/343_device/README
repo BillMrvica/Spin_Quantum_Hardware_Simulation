@@ -1,0 +1,64 @@
+This repository contains the datasets and the analysis scripts used for the  manuscript 'Operating semiconductor quantum processors with hopping spins' of C. Wang et al.
+The repository is created in Febr 2024 by Chien-An Wang and Francesco Borsoi at TU Delft, and then updated on May 2024.
+This note describes on how to obtain the figures related to the part of the manuscript discussing the results of the 3-4-3 array, i.e. the 10 quantum dots array.
+
+Each folder in this repo contains sub-folders that create an article figure.
+
+The folder 'utils' contains 4 relevant files for starting the data analysing.  For the execution of this code, start from running this file:
+
+-- packages_style_database_with_file_importer.py: 
+is the start-up script, by running each cell, we import modules, define functions, and 	select the style of the figures. Users should adjust the path of the "path_datasets" to 	match the 	actual path of the folder in which the datasets are saved.
+
+
+
+Relevant packages for our codes:
+python 3.7.6
+matplotlib 3.4.2
+numpy 1.20.3
+core_tools: 1.0
+scipy 1.7.1
+qcodes 0.29.0
+xarray 0.20.2
+
+For the installation of qcodes and core_tools, you can use git to clone these packages with:
+
+git clone --depth 1 https://github.com/QCoDeS/Qcodes.git
+git clone https://github.com/stephanlphilips/core_tools.git
+
+Install these packages by opening in a folder called 'Code' in  C: (as example) a Python terminal and by running the following lines:
+pip install -e  ./qcodes
+pip install -e  ./core_tools
+
+To run our scripts use a software like Spyder 5.
+
+There is a corrispondence between the name of the folders and the actual figure number in the manuscript posted on arXiv and in the published version.
+This corrispondence is given by the table:
+
+Name of Figure in the manuscript // Name of folder and script name 
+
+
+Fig. 3 // Figure1
+
+
+Suppl. Fig. 1 // FigureS24
+Suppl. Fig. 2 // FigureS25
+
+Suppl. Fig. 4 // FigureS18
+Suppl. Fig. 5 // FigureS19 & S20
+Suppl. Fig. 6 // FigureS21
+
+Suppl. Fig. 8 // FigureS22
+Suppl. Fig. 9 // FigureS17
+Suppl. Fig. 10 // FigureS26
+Suppl. Fig. 24 // FigureS24
+
+Magnetic field calibration is based on CPMG experiments shown and plotted in utils/magnetic_field_calibration.
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,18 @@
+This repository contains the datasets and the analysis scripts used for the  manuscript 'Operating semiconductor quantum processors with hopping spins' of C. Wang et al.
+The repository is created in Febr 2024 by Chien-An Wang and Francesco Borsoi at TU Delft, and then updated on June 2024.
+This note describes on how to obtain the figures and tables related to the part of the manuscript.
+The figures and tables are divided into two parts in two folders: 2x2_device and 343_device.
+To install the python packages for all the data, check the instructions in README file in 343_device folder.
+In the folder 2x2_device, the subfolders and python scripts have names corresponding to the manuscript.
+In the folder 343_device, the README file describes the corrispondence between the name of the folders and the actual figure number in the manuscript.
+
+
+
+
+
+
+
+
+
+
+

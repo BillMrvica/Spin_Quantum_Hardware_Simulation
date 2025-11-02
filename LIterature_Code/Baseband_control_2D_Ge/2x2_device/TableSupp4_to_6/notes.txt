@@ -1,0 +1,7 @@
+1.The GST gate sequences and the readout counts are in dataset_*.txt with standard format in pygsti.
+
+2.file name mapping:
+qubit_A_single-qubit_GST_report.html  ->  Supp\GST_1q\HS_main_XYI_length128_2023-08-23_01-33-58_re_thresholding_V1.html
+qubit_B_single-qubit_GST_report.html  ->  Supp\GST_1q\HS_main_dataset_XYI_length128_2023-08-23_01-09-15_V1.html
+two-qubit_GST_report.html  ->  Supp\GST_2q\2023-08-20_15-35-39_XYICphase_L8_twomode_hessian.html
+
