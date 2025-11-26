@@ -116,6 +116,7 @@ ax.set_xlabel(r'$\rm t_2 (ns)$')
 ax.set_ylabel(r'$\rm t_3 (ns)$')
 ax.set_title('Simulated Spin-Up Probability (Pups) with Contours')
 
+
 # Set ticks (optional, as pcolormesh handles it well)
 ax.set_xticks(np.arange(0, 31, 5))
 ax.set_yticks(np.arange(0, 31, 5))
@@ -123,6 +124,7 @@ ax.set_yticks(np.arange(0, 31, 5))
 # Ensure tight layout
 plt.tight_layout()
 plt.show()
+plt.legend(['Gate Polar Angle = 90°', 'Rotation Angle = 90°', 'Rotation Angle = 270°'])
 
 # The following lines from the original code are for debugging/printing specific values.
 print(func_U(10, 10, *popt))

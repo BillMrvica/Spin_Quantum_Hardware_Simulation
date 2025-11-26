@@ -314,7 +314,7 @@ for print_residual in [True, False]:
             evals, ekets = (H_r[0] + H_r[1][0] * sinetheta2[idx]).eigenstates()
             finalstate_q2_simple[jt,it,idx,0] = abs(  np.dot(state.T , ekets[0].full())   )**2
             finalstate_q2_simple[jt,it,idx,1] = abs(  np.dot(state.T , ekets[1].full())    )**2  
-        
+ 
         finalstate_q2_simple_f[jt,it,:] = finalstate_q2_simple[jt,it,-1,:]    
     if print_residual == False:
         results['print_residual_False'] = dict(finalstate_q2_f=finalstate_q2_f,
@@ -329,10 +329,36 @@ for print_residual in [True, False]:
 
 # %%
 
-results['pair'] = pair
+# results['pair'] = pair
 
-import pickle
-# Using a more standard filename format
-pickle.dump(results , open('FigSupp5_qutip_simulation_results.pickle', 'wb'))
+# import pickle
+# # Using a more standard filename format
+# pickle.dump(results , open('FigSupp5_qutip_simulation_results.pickle', 'wb'))
 
-print("Simulation finished and results saved to FigSupp5_qutip_simulation_results.pickle")
+# print("Simulation finished and results saved to FigSupp5_qutip_simulation_results.pickle")
+
+# import pickle
+# # results = pickle.load( open('FigSupp5_qutip_simulation_results_QuTip5_23.pickle', 'rb'))
+# results = pickle.load( open('FigSupp5_qutip_simulation.pickle', 'rb'))
+
+# pair = results['pair']
+
+finalstate_q2_f = results['print_residual_False']['finalstate_q2_f']
+finalstate_q2_reduction_f = results['print_residual_False']['finalstate_q2_reduction_f']
+finalstate_q2_simple_f = results['print_residual_False']['finalstate_q2_simple_f']
+waittimes = results['print_residual_False']['waittimes']
+
+from mpl_toolkits.axes_grid1 import Divider, Size
+
+fig = plt.figure( figsize=(10,4))
+h = [Size.Fixed(0.5), Size.Fixed(1.5), Size.Fixed(1), Size.Fixed(1.5),  Size.Fixed(1),Size.Fixed(1.5)]
+v = [Size.Fixed(0.5), Size.Fixed(1.5), Size.Fixed(1), Size.Fixed(1.5)]
+divider = Divider(fig, (0, 0, 1, 1), h, v, aspect=False)
+ax11 = fig.add_axes(divider.get_position(),
+                   axes_locator=divider.new_locator(nx=1, ny=1))
+ax31 = fig.add_axes(divider.get_position(),
+                   axes_locator=divider.new_locator(nx=3, ny=1))
+ax51 = fig.add_axes(divider.get_position(),
+                    axes_locator=divider.new_locator(nx=5, ny=1))
+
+plt.show()
