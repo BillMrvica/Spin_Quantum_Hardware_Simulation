@@ -269,9 +269,9 @@ ax_bloch.legend(handles=[
 # ==========================================
 input_left, input_width, start_y, gap_y = 0.05, 0.12, 0.80, 0.06
 inputs = {}
-labels = [('fq2', '$f_{q2}$'), ('fq3', '$f_{q3}$'), ('theta_in', r'$\theta_{in}$'),
-          ('t_q2_res', '$t_{res}$'), ('t_q20', '$t_{q20}$'), ('t_q30', '$t_{q30}$'),
-          ('t_wait1', '$t_{w1}$'), ('t_wait2', '$t_{w2}$')]
+labels = [('fq2', '$f_{q2}$ (GHz)'), ('fq3', '$f_{q3}$ (GHz)'), ('theta_in', r'$\theta_{in}$ (deg)'),
+          ('t_q2_res', '$t_{res}$ (ns)'), ('t_q20', '$t_{q20}$ (ns)'), ('t_q30', '$t_{q30}$ (ns)'),
+          ('t_wait1', '$t_{w1}$ (ns)'), ('t_wait2', '$t_{w2}$ (ns)')]
 
 def make_cb(key):
     def update(text):
@@ -317,7 +317,7 @@ def create_slider(name, label, vmin, vmax, vinit, y_idx, fmt=None, step=None):
     
     val_txt = fig.text(x_s + w_s + 0.09, y + h_c/4, "", fontsize=10)
     
-    delta = step if step else (vmax-vmin)/100
+    delta = step if step else (vmax-vmin)/500
     
     # 绑定事件
     # 注意：lambda 需要绑定 s=s, delta=delta 避免闭包问题（虽然这里是立即执行的，但好习惯）
