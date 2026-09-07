@@ -14,10 +14,10 @@ def generate_quantum_dot_layout_v22_modified(N, set_group_spacing=50, set_horizo
     layout_height = 2500
     pad_width = 100
     pad_height = 150
-    pad_spacing = 30
-    row_spacing = 40
-    horizontal_margin = 300
-    vertical_margin = 350
+    pad_spacing = 60
+    row_spacing = 50
+    horizontal_margin = 400
+    vertical_margin = 500
 
     def natural_sort_key(s):
         return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
@@ -189,7 +189,7 @@ def generate_quantum_dot_layout_v22_modified(N, set_group_spacing=50, set_horizo
     ax.set_title(f'Conceptual Layout for N={N} Quantum Dots ({total_pads} pads total)', fontsize=16)
     chip = patches.Rectangle((0, 0), layout_width, layout_height, lw=2, ec='black', fc='lightgrey')
     ax.add_patch(chip)
-    active_area = patches.Rectangle((layout_width/4, layout_height/4), layout_width/2, layout_height/2, lw=1, ec='red', fc='lightblue')
+    active_area = patches.Rectangle((layout_width*3/8, layout_height*3/8), layout_width/4, layout_height/4, lw=1, ec='red', fc='lightblue')
     ax.add_patch(active_area)
     ax.text(layout_width/2, layout_height/2, 'Active Area', ha='center', va='center', fontsize=12, color='darkred')
     for pad in pad_placements:
@@ -200,4 +200,4 @@ def generate_quantum_dot_layout_v22_modified(N, set_group_spacing=50, set_horizo
         ax.text(x + w/2, y + h/2, pad['label'], ha='center', va='center', fontsize=5, rotation=pad['rotation'])
     plt.show()
 
-generate_quantum_dot_layout_v22_modified(N=32, set_group_spacing=-40, set_horizontal_margin=100)
+generate_quantum_dot_layout_v22_modified(N=18, set_group_spacing=-0, set_horizontal_margin=400)

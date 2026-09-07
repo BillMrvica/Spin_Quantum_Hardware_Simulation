@@ -1,0 +1,27 @@
+# 18-dot wire layer mapping by electrode label suffix
+
+LAYER_SD = 3
+LAYER_SG = 5
+LAYER_PG = 7
+LAYER_BG = 9
+
+# Rule:
+#   - labels containing "_PG" -> LAYER_PG
+#   - labels ending with "_S"  -> LAYER_SD
+#   - labels ending with "_G"  -> LAYER_SG
+#   - labels ending with "_B"  -> LAYER_BG
+#
+# Example:
+#   SET_S -> LAYER_SD
+
+def get_wire_layer(label):
+    if "_PG" in label:
+        return LAYER_PG
+    elif label.endswith("_S"):
+        return LAYER_SD
+    elif label.endswith("_G"):
+        return LAYER_SG
+    elif label.endswith("_B"):
+        return LAYER_BG
+    else:
+        return LAYER_SD

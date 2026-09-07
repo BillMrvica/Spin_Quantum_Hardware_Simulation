@@ -1,0 +1,10 @@
+# Tool / IDE / cache artifacts
+.minimax/
+.sixth/
+.vscode/
+build/
+tmp/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/

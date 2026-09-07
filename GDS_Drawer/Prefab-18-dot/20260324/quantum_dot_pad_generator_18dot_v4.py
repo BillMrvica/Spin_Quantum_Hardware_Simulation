@@ -1,0 +1,1040 @@
+import gdstk
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Polygon as MplPolygon
+import math
+import re
+import os
+
+# ===================================================================
+#                      解决中文显示问题的代码
+# ===================================================================
+plt.rcParams['font.sans-serif'] = ['SimHei']
+plt.rcParams['axes.unicode_minus'] = False
+# ===================================================================
+
+
+class QuantumDotPadGenerator18DotV4:
+    def __init__(self):
+        # Default parameters for quantum dot generation
+        self.qd_params = {
+            'pg_max_width': 0.120, 'pg_vert_side_len': 0.040, 'pg_chamfer_h': 0.040,
+            'pg_bot_flat_w': 0.042, 'pg_top_flat_w': 0.040, 'bg_max_width': 0.060,
+            'bg_vert_side_len': 0.040, 'bg_top_flat_w': 0.020, 'bg_bot_flat_w': 0.042,
+            'gap_pg_bg': 0.002, 'd1_gap': 0.020, 'd2_gap': 0.020,
+            'sd_gap_to_gate': 0.01, 'gap_gate_outer_sg': 0.030, 'sg_mid_thick': 0.100,
+            'sg_top_thick': 0.300, 'sg_bot_thick': 0.300, 'sg_extension': 0.200,
+            'lead_width': 0.042, 'lead_length_bot': 0.4, 'lead_length_top': 0.5,
+            'lead_overlap': 0.025, 'sd_height': 0.10, 'sd_width': 0.35,
+            'sd_lead_width': 0.060, 'sd_outer_length': 0.300
+        }
+
+        # Default parameters for pad frame generation
+        self.pad_params = {
+            'N': 18, 'layout_width': 2500, 'layout_height': 2500,
+            'pad_width': 100, 'pad_height': 100, 'pad_spacing': 30,
+            'edge_margin': 100, 'active_size': 400,
+            'active_size_2': 150, 'active_size_3': 60,
+            'active_width_4': 30, 'active_height_4': 15,
+            'trace_width': 10, 'trace_spacing': 10, 'taper_length': 40,
+            'active_entry_len': 40, 'active_entry_len_2': 10,
+            'active_entry_len_3': 5, 'active_entry_len_4': 2,
+            'inner_trace_width': 1.0, 'inner_trace_spacing': 2.0,
+            'inner_trace_width_3': 0.5, 'inner_trace_spacing_3': 1.0,
+            'inner_trace_width_4': 0.1, 'inner_trace_spacing_4': 0.5
+        }
+
+        self.device_lib = None
+        self.device_cell = None
+        self.device_connection_points = None
+        self.pad_lib = None
+        self.pad_cell = None
+        self.pad_connection_points = None
+        self.active_center = None
+        self.all_pads_info = None
+
+    def _layer_for_electrode(self, name, stage="device"):
+        name = name.upper()
+        if name in {"QD_D", "QD_S"} or name.startswith("SET") and (name.endswith("_S") or name.endswith("_D")):
+            return 3 if stage == "device" else 4
+        if name == "SG1" or name == "SG2" or name == "SG3":
+            return 5 if stage == "device" else 6
+        if name.startswith("QD_PG") or "_G" in name:
+            return 7 if stage == "device" else 8
+        if name.startswith("QD_B") or "_B1" in name or "_B2" in name:
+            return 9 if stage == "device" else 10
+        if name == "GND":
+            return 9 if stage == "device" else 10
+        return 22
+
+    def _plot_gds(self, cell, title="18-dot 量子点器件布局 (V4)", show_plot=True):
+        if not show_plot:
+            return
+
+        fig, ax = plt.subplots(figsize=(16, 12))
+        ax.set_title(title, fontsize=18)
+
+        # 先按“实际存在的 layer”收集，而不是只画固定层号，避免漏掉模块
+        polygons_by_layer = {}
+        for poly in cell.get_polygons(depth=None):
+            polygons_by_layer.setdefault(poly.layer, []).append(poly)
+
+        # 同时把 path 也纳入预览，避免 FlexPath / Path 看不到
+        paths = cell.get_paths(depth=None)
+
+        layer_config = {
+            3: {'color': '#87CEEB', 'alpha': 0.65, 'label': 'S/D (L3)', 'zorder': 2},
+            4: {'color': '#6baed6', 'alpha': 0.45, 'label': 'S/D middle (L4)', 'zorder': 1},
+            5: {'color': '#D3D3D3', 'alpha': 0.55, 'label': 'SG (L5)', 'zorder': 3},
+            6: {'color': '#bdbdbd', 'alpha': 0.40, 'label': 'SG middle (L6)', 'zorder': 2},
+            7: {'color': '#8A2BE2', 'alpha': 0.90, 'label': 'PG (L7)', 'zorder': 5},
+            8: {'color': '#b57edc', 'alpha': 0.45, 'label': 'PG middle (L8)', 'zorder': 4},
+            9: {'color': '#FF1493', 'alpha': 0.90, 'label': 'BG (L9)', 'zorder': 7},
+            10: {'color': '#ff6fb0', 'alpha': 0.45, 'label': 'BG middle (L10)', 'zorder': 6},
+            20: {'color': '#ecf0f1', 'alpha': 0.35, 'label': 'Pad oxide (L20)', 'zorder': 0},
+            22: {'color': '#f1c40f', 'alpha': 0.85, 'label': 'Wide metal / laser write (L22)', 'zorder': 8},
+            30: {'color': '#ecf0f1', 'alpha': 0.20, 'label': 'Substrate (L30)', 'zorder': 0},
+            60: {'color': '#e67e22', 'alpha': 0.20, 'label': 'SiO2 (L60)', 'zorder': 1},
+        }
+
+        drawn_labels = set()
+
+        for layer in sorted(polygons_by_layer.keys(), key=lambda x: layer_config.get(x, {'zorder': 50})['zorder']):
+            cfg = layer_config.get(layer, {'color': '#999999', 'alpha': 0.35, 'label': f'Layer {layer}', 'zorder': 50})
+            polys = polygons_by_layer[layer]
+            for poly in polys:
+                pts = poly.points
+                if pts.ndim != 2 or len(pts) < 3:
+                    continue
+                current_label = cfg['label'] if cfg['label'] not in drawn_labels else None
+                ax.add_patch(
+                    MplPolygon(
+                        pts,
+                        closed=True,
+                        facecolor=cfg['color'],
+                        edgecolor='none',
+                        linewidth=0,
+                        alpha=cfg['alpha'],
+                        label=current_label,
+                        zorder=cfg['zorder']
+                    )
+                )
+                if current_label:
+                    drawn_labels.add(cfg['label'])
+
+        # 单独把路径画出来，防止 FlexPath 没有 polygon 化时漏显示
+        for path in paths:
+            try:
+                pts = np.array(path.points)
+                if pts.ndim == 2 and len(pts) >= 2:
+                    ax.plot(pts[:, 0], pts[:, 1], color='#2c3e50', linewidth=max(getattr(path, 'width', 0.2), 0.2), alpha=0.55, zorder=99)
+            except Exception:
+                pass
+
+        handles, labels = ax.get_legend_handles_labels()
+        if handles:
+            by_label = dict(zip(labels, handles))
+            ax.legend(by_label.values(), by_label.keys(), loc='upper right')
+
+        ax.set_aspect('equal')
+        bbox = cell.bounding_box()
+        if bbox is not None:
+            min_x, min_y = bbox[0]
+            max_x, max_y = bbox[1]
+            width = max_x - min_x
+            height = max_y - min_y
+            margin_x = width * 0.1 if width > 0 else 1
+            margin_y = height * 0.1 if height > 0 else 1
+            ax.set_xlim(min_x - margin_x, max_x + margin_x)
+            ax.set_ylim(min_y - margin_y, max_y + margin_y)
+        else:
+            ax.autoscale_view()
+
+        ax.set_xlabel('x (um)')
+        ax.set_ylabel('y (um)')
+        plt.grid(True, which='both', linestyle='--', alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+
+    def _create_18qd_layout_with_labels(self, **kwargs):
+        params = {**self.qd_params, **kwargs}
+        pg_max_width = params['pg_max_width']; pg_vert_side_len = params['pg_vert_side_len']; pg_chamfer_h = params['pg_chamfer_h']
+        pg_bot_flat_w = params['pg_bot_flat_w']; pg_top_flat_w = params['pg_top_flat_w']; bg_max_width = params['bg_max_width']
+        bg_vert_side_len = params['bg_vert_side_len']; bg_top_flat_w = params['bg_top_flat_w']; bg_bot_flat_w = params['bg_bot_flat_w']
+        gap_pg_bg = params['gap_pg_bg']; d1_gap = params['d1_gap']; d2_gap = params['d2_gap']
+        sd_gap_to_gate = params['sd_gap_to_gate']; gap_gate_outer_sg = params['gap_gate_outer_sg']; sg_mid_thick = params['sg_mid_thick']
+        sg_top_thick = params['sg_top_thick']; sg_bottom_thick = params['sg_bot_thick']; sg_extension = params['sg_extension']
+        lead_width = params['lead_width']; lead_length_bot = params['lead_length_bot']; lead_length_top = params['lead_length_top']
+        lead_overlap = params['lead_overlap']; sd_height = params['sd_height']; sd_width = params['sd_width']
+        sd_lead_width = params['sd_lead_width']; sd_outer_length = params['sd_outer_length']
+
+        LAYER_SD = 3
+        LAYER_SD_MIDDLE = 4
+        LAYER_SG = 5
+        LAYER_SG_MIDDLE = 6
+        LAYER_PG = 7
+        LAYER_PG_MIDDLE = 8
+        LAYER_BG = 9
+        LAYER_BG_MIDDLE = 10
+        LAYER_LABEL = 100
+        LAYER_PAD_OXIDE = 20
+        LAYER_LASER_WRITE = 22
+
+        LAYER_ION_MILLING_1 = 16
+        LAYER_ION_MILLING_2 = 17
+        LAYER_ION_MILLING_3 = 18
+        LAYER_ION_MILLING_4 = 19
+
+        gate_half_height = pg_vert_side_len / 2 + pg_chamfer_h
+        row_pitch = gate_half_height + d1_gap + sg_mid_thick + d2_gap + gate_half_height
+        lib = gdstk.Library()
+        cell = lib.new_cell('18QD_DEVICE_WITH_LEADS')
+        connection_points = {}
+
+        def get_pg_points(c):
+            cx, cy = c
+            yvt = pg_vert_side_len / 2
+            yvb = -pg_vert_side_len / 2
+            yt = yvt + pg_chamfer_h
+            yb = yvb - pg_chamfer_h
+            xm = pg_max_width / 2
+            xtf = pg_top_flat_w / 2
+            xbf = pg_bot_flat_w / 2
+            return [(cx + xtf, cy + yt), (cx + xm, cy + yvt), (cx + xm, cy + yvb), (cx + xbf, cy + yb), (cx - xbf, cy + yb), (cx - xm, cy + yvb), (cx - xm, cy + yvt), (cx - xtf, cy + yt)], yt, yb
+
+        def get_bg_points(c):
+            cx, cy = c
+            yvt = bg_vert_side_len / 2
+            yvb = -pg_vert_side_len / 2
+            bcht = (bg_max_width - bg_top_flat_w) / 2
+            bchb = (bg_max_width - bg_bot_flat_w) / 2
+            yt = yvt + bcht
+            yb = yvb - bchb
+            xm = bg_max_width / 2
+            xtf = bg_top_flat_w / 2
+            xbf = bg_bot_flat_w / 2
+            return [(cx + xtf, cy + yt), (cx + xm, cy + yvt), (cx + xm, cy + yvb), (cx + xbf, cy + yb), (cx - xbf, cy + yb), (cx - xm, cy + yvb), (cx - xm, cy + yvt), (cx - xtf, cy + yt)], yt, yb
+
+        pglb = -(pg_vert_side_len / 2 + pg_chamfer_h)
+        bglb = -(bg_vert_side_len / 2 + (bg_max_width - bg_bot_flat_w) / 2)
+        fbe = min(pglb, bglb) - lead_length_bot
+        yct = row_pitch
+        pglt = (pg_vert_side_len / 2 + pg_chamfer_h)
+        bglt = (bg_vert_side_len / 2 + (bg_max_width - bg_top_flat_w) / 2)
+        fte = yct + max(pglt, bglt) + lead_length_top
+
+        all_shapes = []
+        ycb = 0
+        curr_x = 0
+        bgn = []
+        [bgn.extend([f'QD_B{i}', f'QD_PG{i}']) for i in range(1, 19)]
+        bgn.append('QD_B19')
+        bot_tips_y = []
+        pg_centers_x = []
+
+        for i, n in enumerate(bgn):
+            gt = 'PG' if 'PG' in n else 'BG'
+            w = pg_max_width if gt == 'PG' else bg_max_width
+            lyr = LAYER_PG if gt == 'PG' else LAYER_BG
+            if i > 0:
+                pw = pg_max_width if 'PG' in bgn[i - 1] else bg_max_width
+                curr_x += (pw / 2) + gap_pg_bg + (w / 2)
+            cen = (curr_x, ycb)
+            pts, tip_y, by = get_pg_points(cen) if gt == 'PG' else get_bg_points(cen)
+            bot_tips_y.append(tip_y)
+            poly = gdstk.Polygon(pts, layer=lyr)
+            lys = by + lead_overlap
+            lye = fbe
+            lead = gdstk.rectangle((curr_x - lead_width / 2, lys), (curr_x + lead_width / 2, lye), layer=lyr)
+            all_shapes.extend(gdstk.boolean([poly, lead], [], 'or', layer=lyr))
+            lbl = gdstk.Label(n, (curr_x, lye), layer=LAYER_LABEL)
+            cell.add(lbl)
+            connection_points[n] = lbl.origin
+            if gt == 'PG':
+                pg_centers_x.append(curr_x)
+
+        bmx = -bg_max_width / 2
+        bax = curr_x + bg_max_width / 2
+        cxg = (bmx + bax) / 2
+        set_centers_x = [pg_centers_x[1], pg_centers_x[4], pg_centers_x[7], pg_centers_x[10], pg_centers_x[13], pg_centers_x[16]]
+
+        def create_set_at(cpgx, set_idx):
+            shps = []
+            offs = [-(pg_max_width / 2 + gap_pg_bg + bg_max_width / 2), 0, (pg_max_width / 2 + gap_pg_bg + bg_max_width / 2)]
+            sgn = [f'SET{set_idx}_B1', f'SET{set_idx}_G', f'SET{set_idx}_B2']
+            for off, n in zip(offs, sgn):
+                cx = cpgx + off
+                gt = 'PG' if '_G' in n else 'BG'
+                lyr = LAYER_PG if gt == 'PG' else LAYER_BG
+                pts, _, _ = get_pg_points((cx, yct)) if gt == 'PG' else get_bg_points((cx, yct))
+                poly = gdstk.Polygon(pts, layer=lyr)
+                Wty = np.max([pt[1] for pt in pts])
+                lys = Wty - lead_overlap
+                lye = fte
+                lead = gdstk.rectangle((cx - lead_width / 2, lys), (cx + lead_width / 2, lye), layer=lyr)
+                shps.extend(gdstk.boolean([poly, lead], [], 'or', layer=lyr))
+                lbl = gdstk.Label(n, (cx, lye), layer=LAYER_LABEL)
+                cell.add(lbl)
+                connection_points[n] = lbl.origin
+            return shps
+
+        for i in range(1, 7):
+            all_shapes.extend(create_set_at(set_centers_x[i - 1], i))
+
+        # S/D regions and leads
+        sd_shps = []
+        sdcr = 0.020
+
+        def cr(xmin, ymin, xmax, ymax, crnrs, layer=LAYER_SD):
+            poly = gdstk.Polygon([(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)], layer=layer)
+            poly.fillet([sdcr if c else 0 for c in crnrs], tolerance=0.001)
+            return poly
+
+        blsix = bmx - sd_gap_to_gate
+        brsix = bax + sd_gap_to_gate
+        golx = blsix - sd_outer_length
+        gorx = brsix + sd_outer_length
+        sd_shps.append(cr(golx, ycb - sd_height / 2, blsix, ycb + sd_height / 2, [False, True, True, False], layer=LAYER_SD))
+        lqdd = gdstk.Label("QD_D", (golx, ycb), layer=LAYER_LABEL)
+        cell.add(lqdd)
+        connection_points["QD_D"] = lqdd.origin
+        sd_shps.append(cr(brsix, ycb - sd_height / 2, gorx, ycb + sd_height / 2, [True, False, False, True], layer=LAYER_SD))
+        lqds = gdstk.Label("QD_S", (gorx, ycb), layer=LAYER_LABEL)
+        cell.add(lqds)
+        connection_points["QD_S"] = lqds.origin
+
+        shw = bg_max_width + gap_pg_bg + pg_max_width / 2
+        lsle = set_centers_x[0] - shw
+        tlsix = lsle - sd_gap_to_gate
+        sd_shps.append(cr(golx, yct - sd_height / 2, tlsix, yct + sd_height / 2, [False, True, True, False], layer=LAYER_SD))
+        msdcx_s1d = (golx + tlsix) / 2
+        mlye = yct + lead_length_top
+        ls1d = gdstk.Label("SET1_D", (golx, yct), layer=LAYER_LABEL)
+        cell.add(ls1d)
+        connection_points["SET1_D"] = ls1d.origin
+
+        rsre = set_centers_x[5] + shw
+        trsix = rsre + sd_gap_to_gate
+        sd_shps.append(cr(trsix, yct - sd_height / 2, gorx, yct + sd_height / 2, [True, False, False, True], layer=LAYER_SD))
+        msdcx_s6d = (trsix + gorx) / 2
+        ls6d = gdstk.Label("SET6_D", (gorx, yct), layer=LAYER_LABEL)
+        cell.add(ls6d)
+        connection_points["SET6_D"] = ls6d.origin
+
+        ohmic_centers_x = [msdcx_s1d]
+        for i in range(1, 6):
+            smxm = set_centers_x[i - 1] + shw + sd_gap_to_gate
+            smxa = set_centers_x[i] - shw - sd_gap_to_gate
+            msdcx = (smxm + smxa) / 2
+            sd_shps.append(cr(smxm, yct - sd_height / 2, smxa, yct + sd_height / 2, [True, True, True, True], layer=LAYER_SD))
+            sd_shps.append(gdstk.rectangle((msdcx - sd_lead_width / 2, yct), (msdcx + sd_lead_width / 2, mlye), layer=LAYER_SD))
+            label_name = f"SET{i}{i+1}_S" if i % 2 != 0 else f"SET{i}{i+1}_D"
+            lbl = gdstk.Label(label_name, (msdcx, mlye), layer=LAYER_LABEL)
+            cell.add(lbl)
+            connection_points[label_name] = lbl.origin
+            ohmic_centers_x.append(msdcx)
+        ohmic_centers_x.append(msdcx_s6d)
+
+        sgxs = bmx - sg_extension
+        sgxe = bax + sg_extension
+        ysgmb = max(bot_tips_y) + d1_gap
+        ysgmt = ysgmb + sg_mid_thick
+        sg_mid = gdstk.rectangle((sgxs, ysgmb), (sgxe, ysgmt), layer=LAYER_SG)
+
+        # Modulated SG1 (Top SG) based on hand drawing
+        ysgtb = yct + gate_half_height + gap_gate_outer_sg
+        ysgtt = ysgtb + sg_top_thick
+        neck_half_width = 0.1
+        transition_width = 0.02
+        neck_thickness = 0.10
+        full_thickness = sg_top_thick
+
+        def create_modulated_sg1_poly():
+            pts_bot = []
+            pts_top = []
+            pts_top.append((sgxs, ysgtt))
+            pts_top.append((sgxe, ysgtt))
+            pts_bot.append((sgxs, ysgtb))
+            for xc in ohmic_centers_x[1:-1]:  # Skip the first and last ohmic centers for modulation
+                x1 = xc - neck_half_width - transition_width
+                x2 = xc - neck_half_width
+                x3 = xc + neck_half_width
+                x4 = xc + neck_half_width + transition_width
+                y_full = ysgtb
+                y_neck = ysgtb + (full_thickness - neck_thickness)
+                pts_bot.append((x1, y_full))
+                pts_bot.append((x2, y_neck))
+                pts_bot.append((x3, y_neck))
+                pts_bot.append((x4, y_full))
+            pts_bot.append((sgxe, ysgtb))
+            return gdstk.Polygon(pts_bot + pts_top[::-1], layer=LAYER_SG)
+
+        sg_top = create_modulated_sg1_poly()
+
+        ysgbt = ycb - gate_half_height - gap_gate_outer_sg
+        ysgbb = ysgbt - sg_bottom_thick
+        sg_bot = gdstk.rectangle((sgxs, ysgbb), (sgxe, ysgbt), layer=LAYER_SG)
+
+        all_shapes.extend([sg_top, sg_mid, sg_bot])
+
+        lsg1 = gdstk.Label("SG1", (sgxs, (ysgtb + ysgtt) / 2), layer=LAYER_LABEL)
+        cell.add(lsg1)
+        connection_points["SG1"] = lsg1.origin
+        lsg2 = gdstk.Label("SG2", (sgxs, (ysgmb + ysgmt) / 2), layer=LAYER_LABEL)
+        cell.add(lsg2)
+        connection_points["SG2"] = lsg2.origin
+        lsg3 = gdstk.Label("SG3", (sgxe, (ysgbb + ysgbt) / 2), layer=LAYER_LABEL)
+        cell.add(lsg3)
+        connection_points["SG3"] = lsg3.origin
+
+        all_shapes.extend(sd_shps)
+        cell.add(*all_shapes)
+        return lib, cell, connection_points, sgxe-sgxs # 最后一个变量对应SG的宽度
+
+    def _create_rect_wire_layout(self, **kwargs):
+        params = {**self.pad_params, **kwargs}
+        N = params['N']
+        layout_width = params['layout_width']
+        layout_height = params['layout_height']
+        pad_width = params['pad_width']
+        pad_height = params['pad_height']
+        pad_spacing = params['pad_spacing']
+        edge_margin = params['edge_margin']
+
+        active_size = params.get('active_size', 400)
+        active_width = params.get('active_width', active_size)
+        active_height = params.get('active_height', active_size)
+
+        trace_width = params['trace_width']
+        trace_spacing = params['trace_spacing']
+        taper_length = params['taper_length']
+        active_entry_len = params['active_entry_len']
+        active_size_2 = params.get('active_size_2', 150)
+        active_size_3 = params.get('active_size_3', 70)
+        active_width_4 = params.get('active_width_4', 15)
+        active_height_4 = params.get('active_height_4', 12)
+        inner_trace_width = params.get('inner_trace_width', 1.0)
+        active_entry_len_2 = params.get('active_entry_len_2', 10)
+        active_entry_len_3 = params.get('active_entry_len_3', 8)
+        active_entry_len_4 = params.get('active_entry_len_4', 1)
+
+        lib = gdstk.Library()
+        cell = lib.new_cell('PAD_FRAME_WITH_WIRES')
+        connection_points = {}
+        all_pads = []
+        self.global_pad_counter = 0
+
+        def nsk(s):
+            return [int(t) if t.isdigit() else t.lower() for t in re.split('([0-9]+)', s)]
+
+        pgl = sorted([f"QD_PG{i + 1}" for i in range(N)], key=nsk)
+        bgl = sorted([f"QD_B{i + 1}" for i in range(N + 1)], key=nsk)
+        gs = []
+        [gs.extend([bgl[i], pgl[i]]) for i in range(N)]
+        gs.append(bgl[N])
+
+        set_electrodes = []
+        for i in range(1, 7):
+            if i == 1:
+                set_electrodes.append("SET1_D")
+            set_electrodes.extend([f"SET{i}_B1", f"SET{i}_G", f"SET{i}_B2"])
+            if i < 6:
+                label_name = f"SET{i}{i + 1}_S" if i % 2 != 0 else f"SET{i}{i + 1}_D"
+                set_electrodes.append(label_name)
+            if i == 6:
+                set_electrodes.append("SET6_D")
+
+        pb = gs[10:27]
+        lp = set_electrodes[1:3][::-1] + ["GND", "SG1"] + set_electrodes[:1] + ["SG2", "QD_D"] + gs[:10]
+        rp = set_electrodes[22:25] + ["QD_S", "GND", "SG3", "GND"] + list(reversed(gs[27:]))
+        tp = set_electrodes[3:22]
+
+        def ac(pads, edge):
+            c = len(pads)
+            if c == 0:
+                return
+            if edge in ['top', 'bottom']:
+                ts = c * pad_width + (c - 1) * pad_spacing
+                sx = (layout_width - ts) / 2
+                y = layout_height - edge_margin - pad_height if edge == 'top' else edge_margin
+                for i, lbl in enumerate(pads):
+                    x = sx + i * (pad_width + pad_spacing)
+                    cx, cy = x + pad_width / 2, y + pad_height / 2
+                    all_pads.append({'label': lbl, 'rect': (x, y, pad_width, pad_height), 'center': (cx, cy), 'edge': edge, 'global_index': self.global_pad_counter})
+                    self.global_pad_counter += 1
+            else:
+                ts = c * pad_width + (c - 1) * pad_spacing
+                y_top = (layout_height + ts) / 2 - pad_width
+                x = edge_margin if edge == 'left' else layout_width - edge_margin - pad_height
+                for i, lbl in enumerate(pads):
+                    y = y_top - i * (pad_width + pad_spacing)
+                    cx, cy = x + pad_height / 2, y + pad_width / 2
+                    all_pads.append({'label': lbl, 'rect': (x, y, pad_height, pad_width), 'center': (cx, cy), 'edge': edge, 'global_index': self.global_pad_counter})
+                    self.global_pad_counter += 1
+
+        ac(tp, 'top')
+        ac(pb, 'bottom')
+        ac(lp, 'left')
+        ac(rp, 'right')
+        cx = layout_width / 2
+        cy = layout_height / 2
+        acenter = (cx, cy)
+        ax1 = cx - active_width / 2
+        ax2 = cx + active_width / 2
+        ay1 = cy - active_height / 2
+        ay2 = cy + active_height / 2
+        pbe = {'top': [], 'bottom': [], 'left': [], 'right': []}
+        [pbe[p['edge']].append(p) for p in all_pads]
+
+        ax1_2, ax2_2 = cx - active_size_2 / 2, cx + active_size_2 / 2
+        ay1_2, ay2_2 = cy - active_size_2 / 2, cy + active_size_2 / 2
+
+        ax1_3, ax2_3 = cx - active_size_3 / 2, cx + active_size_3 / 2
+        ay1_3, ay2_3 = cy - active_size_3 / 2, cy + active_size_3 / 2
+
+        ax1_4, ax2_4 = cx - active_width_4 / 2, cx + active_width_4 / 2
+        ay1_4, ay2_4 = cy - active_height_4 / 2, cy + active_height_4 / 2
+
+        pbe['top'].sort(key=lambda p: p['center'][0])
+        pbe['bottom'].sort(key=lambda p: p['center'][0])
+        pbe['left'].sort(key=lambda p: p['center'][1], reverse=True)
+        pbe['right'].sort(key=lambda p: p['center'][1], reverse=True)
+        pitch = trace_width + trace_spacing
+
+        def at(pads, edge):
+            n = len(pads)
+            if n == 0:
+                return
+            ind = np.arange(n) - (n - 1) / 2
+            offs = ind * pitch
+            if edge == 'top':
+                [p.update({'target': (cx + offs[i], ay2), 'target_edge': 'top'}) for i, p in enumerate(pads)]
+            elif edge == 'bottom':
+                [p.update({'target': (cx + offs[i], ay1), 'target_edge': 'bottom'}) for i, p in enumerate(pads)]
+            elif edge == 'left':
+                [p.update({'target': (ax1, cy + offs[-(i + 1)]), 'target_edge': 'left'}) for i, p in enumerate(pads)]
+            else:
+                [p.update({'target': (ax2, cy + offs[-(i + 1)]), 'target_edge': 'right'}) for i, p in enumerate(pads)]
+
+        [at(pbe[edge], edge) for edge in ['top', 'bottom', 'left', 'right']]
+
+        inner_trace_spacing = params.get('inner_trace_spacing', 2.0)
+        inner_pitch = inner_trace_width + inner_trace_spacing
+
+        inner_trace_width_2 = 10.0
+        inner_pitch_2 = inner_trace_width_2 + 10.0
+        inner_trace_width_3 = params.get('inner_trace_width_3', 1.0)
+        inner_trace_spacing_3 = params.get('inner_trace_spacing_3', 2.0)
+        inner_pitch_3 = inner_trace_width_3 + inner_trace_spacing_3
+
+        inner_trace_width_4 = params.get('inner_trace_width_4', 0.1)
+        inner_trace_spacing_4 = params.get('inner_trace_spacing_4', 0.2)
+        inner_pitch_4 = inner_trace_width_4 + inner_trace_spacing_4
+
+        def at_inner(pads, edge, pitch_val, target_y_top, target_y_bot, target_x_left, target_x_right, suffix):
+            n = len(pads)
+            if n == 0:
+                return
+            ind = np.arange(n) - (n - 1) / 2
+            offs = ind * pitch_val
+            if edge == 'top':
+                [p.update({f'target_{suffix}': (cx + offs[i], target_y_top)}) for i, p in enumerate(pads)]
+            elif edge == 'bottom':
+                [p.update({f'target_{suffix}': (cx + offs[i], target_y_bot)}) for i, p in enumerate(pads)]
+            elif edge == 'left':
+                [p.update({f'target_{suffix}': (target_x_left, cy + offs[-(i + 1)])}) for i, p in enumerate(pads)]
+            else:
+                [p.update({f'target_{suffix}': (target_x_right, cy + offs[-(i + 1)])}) for i, p in enumerate(pads)]
+
+        [at_inner(pbe[edge], edge, inner_pitch, ay2_2, ay1_2, ax1_2, ax2_2, '2') for edge in ['top', 'bottom', 'left', 'right']]
+        [at_inner(pbe[edge], edge, inner_pitch_3, ay2_3, ay1_3, ax1_3, ax2_3, '3') for edge in ['top', 'bottom', 'left', 'right']]
+        [at_inner(pbe[edge], edge, inner_pitch_4, ay2_4, ay1_4, ax1_4, ax2_4, '4') for edge in ['top', 'bottom', 'left', 'right']]
+
+        # New layer definitions:
+        # 3/4: S/D and S/D middle
+        # 5/6: SG and SG middle
+        # 7/8: PG and PG middle
+        # 9/10: BG and BG middle
+        LS = 30
+        LAYER_LASER_WRITE = 22
+        LP = LAYER_LASER_WRITE
+        LT = LAYER_LASER_WRITE
+        LTXT = 40
+        LA1 = 50
+        LA2 = 51
+        LA3 = 52
+        LA4 = 53
+        LSIO2 = 20
+        L_ETCH_AL2O3 = 12
+
+        LAYER_ION_MILLING_1 = 16
+        LAYER_ION_MILLING_2 = 17
+        LAYER_ION_MILLING_3 = 18
+        LAYER_ION_MILLING_4 = 19
+
+        cell.add(gdstk.rectangle((0, 0), (layout_width, layout_height), layer=LS))
+
+        # # Active Region No.1
+        # cell.add(gdstk.rectangle((ax1, ay1), (ax2, ay2), layer=LA1))
+        # cell.add(gdstk.Label("Active Region No.1", (ax1, ay2), layer=LTXT, magnification=10))
+
+        # # Active Region No.2
+        # cell.add(gdstk.rectangle((ax1_2, ay1_2), (ax2_2, ay2_2), layer=LA2))
+        # cell.add(gdstk.Label("Active Region No.2", (ax1_2, ay2_2), layer=LTXT, magnification=10))
+
+        # # Active Region No.3
+        # cell.add(gdstk.rectangle((ax1_3, ay1_3), (ax2_3, ay2_3), layer=LA3))
+        # cell.add(gdstk.Label("Active Region No.3", (ax1_3, ay2_3), layer=LTXT, magnification=5))
+
+        # # Active Region No.4
+        # cell.add(gdstk.rectangle((ax1_4, ay1_4), (ax2_4, ay2_4), layer=LA4))
+        # cell.add(gdstk.Label("Active Region No.4", (ax1_4, ay2_4), layer=LTXT, magnification=2))
+
+        def ct(pr, edge, tl, tw):
+            x, y, w, h = pr
+            cx0, cy0 = x + w / 2, y + h / 2
+            if edge == 'top':
+                pts = [(x, y), (x + w, y), (cx0 + tw / 2, y - tl), (cx0 - tw / 2, y - tl)]
+                start = (cx0, y - tl)
+            elif edge == 'bottom':
+                pts = [(x, y + h), (x + w, y + h), (cx0 + tw / 2, y + h + tl), (cx0 - tw / 2, y + h + tl)]
+                start = (cx0, y + h + tl)
+            elif edge == 'left':
+                pts = [(x + w, y), (x + w, y + h), (x + w + tl, cy0 + tw / 2), (x + w + tl, cy0 - tw / 2)]
+                start = (x + w + tl, cy0)
+            else:
+                pts = [(x, y), (x, y + h), (x - tl, cy0 + tw / 2), (x - tl, cy0 - tw / 2)]
+                start = (x - tl, cy0)
+            return gdstk.Polygon(pts, layer=LT), start
+
+        inner_trace_3_extend = 20
+        inner_trace_4_extend = 3
+        inner_trace_5_extend = 0.5
+        def extend_to_prev_trace(p, edge, extend_len):
+            x, y = p
+            if edge == 'top':
+                return (x, y+extend_len)
+            elif edge == 'bottom':
+                return (x, y-extend_len)
+            elif edge == 'left':
+                return (x-extend_len, y)
+            else:
+                return (x+extend_len, y)
+
+        def extend_to_prev_trace2_half(p, edge, extend_len):
+            x, y = p
+            if edge == 'top':
+                return [(x, y-extend_len/2), (x, y+extend_len/2)]
+            elif edge == 'bottom':
+                return [(x, y+extend_len/2), (x, y-extend_len/2)]
+            elif edge == 'left':
+                return [(x+extend_len/2, y), (x-extend_len/2, y)]
+            else:
+                return [(x-extend_len/2, y), (x+extend_len/2, y)]
+        
+        def get_ion_milling_obj(cell, p, label, edge, extend_len, space, width):
+            x, y = p
+            if edge == 'top':
+                pts_ion = [(x, y + space), (x, y + extend_len - space)]
+            elif edge == 'bottom':
+                pts_ion = [(x, y - space), (x, y - extend_len + space)]
+            elif edge == 'left':
+                pts_ion = [(x - space, y), (x - extend_len + space, y)]
+            else:
+                pts_ion = [(x + space, y), (x + extend_len - space, y)]
+
+            ion_milling_obj = []
+
+            if "_PG" in label:
+                # return LAYER_PG
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_1))
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_2))
+            if "SG" in label:
+                # return LAYER_SG
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_1))
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_2))
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_3))
+            if "_D" in label:
+                # return LAYER_SD
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_1))
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_2))
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_3))
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_4))
+            if "_S" in label:
+                # return LAYER_SD
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_1))
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_2))
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_3))
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_4))
+            if "_G" in label:
+                # return LAYER_PG
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_1))
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_2))
+            if "_B" in label:
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_1))
+            if "GND" in label:
+                cell.add(gdstk.FlexPath(pts_ion, width, ends="flush", joins="round", layer=LAYER_ION_MILLING_1))
+                
+
+        def rsz(sp, tp, edge, width, custom_sm=None, custom_entry=None, layer=None):
+            x1, y1 = sp
+            x2, y2 = tp
+            sm = custom_sm if custom_sm is not None else 20
+            pts = [(x1, y1)]
+            entry = custom_entry if custom_entry is not None else active_entry_len
+            if edge in ['top', 'bottom']:
+                sy = -1 if edge == 'top' else 1
+                ys = y1 + sy * sm
+                pts.append((x1, ys))
+                ye = y2 + sy * entry
+                ah = abs(ye - ys)
+                nw = abs(x2 - x1)
+                sx = 1 if x2 > x1 else -1
+                if nw > ah:
+                    hl = ah / 2
+                    ym = ys + sy * hl
+                    xm1 = x1 + sx * hl
+                    xm2 = x2 - sx * hl
+                    pts.extend([(xm1, ym), (xm2, ym)])
+                else:
+                    dyd = nw
+                    yte = ys + sy * dyd
+                    pts.append((x2, yte))
+                pts.append((x2, y2))
+            else:
+                sx = 1 if edge == 'left' else -1
+                xs = x1 + sx * sm
+                pts.append((xs, y1))
+                xe = x2 + sx * entry
+                aw = abs(xe - xs)
+                nh = abs(y2 - y1)
+                sy = 1 if y2 > y1 else -1
+                if nh > aw:
+                    wl = aw / 2
+                    xm = xs + sx * wl
+                    ym1 = y1 + sy * wl
+                    ym2 = y2 - sy * wl
+                    pts.extend([(xm, ym1), (xm, ym2)])
+                else:
+                    dxd = nh
+                    xte = xs + sx * dxd
+                    pts.append((xte, y2))
+                pts.append((x2, y2))
+            path_layer = layer if layer is not None else LT
+            return gdstk.FlexPath(pts, width, ends="flush", joins="round", layer=path_layer), pts
+
+        def layer_for_stage(label_name, stage):
+            return self._layer_for_electrode(label_name, stage=stage)
+
+        for p in all_pads:
+            x, y, w, h = p['rect']
+            lbl = p['label']
+            edge = p['edge']
+            p_layer = LAYER_LASER_WRITE
+            cell.add(gdstk.rectangle((x - 5, y - 5), (x + w + 5, y + h + 5), layer=LSIO2))
+            cell.add(gdstk.rectangle((x + 5, y + 5), (x + w - 5, y + h - 5), layer=L_ETCH_AL2O3))
+
+            cell.add(gdstk.rectangle((x, y), (x + w, y + h), layer=p_layer))
+            cx0, cy0 = x + w / 2, y + h / 2
+            rot = 0 if w > h else math.pi / 2
+            cell.add(gdstk.Label(lbl, (cx0, cy0), layer=LTXT, magnification=10, rotation=rot))
+            poly_t, t_start = ct(p['rect'], edge, taper_length, trace_width)
+            cell.add(poly_t)
+            path_obj, path_pts = rsz(t_start, p['target'], edge, trace_width, layer=LAYER_LASER_WRITE)
+            cell.add(path_obj)
+            p['trace_points'] = path_pts
+
+            # Inner leads from Region 1 to Region 2 -> all wide metal, layer 22
+            inner_path_obj_2, _ = rsz(
+                p['target'],
+                p['target_2'],
+                edge,
+                inner_trace_width,
+                custom_sm=10,
+                custom_entry=active_entry_len_2,
+                layer=LAYER_LASER_WRITE
+            )
+            cell.add(inner_path_obj_2)
+
+            # Inner leads from Region 2 to Region 3/4, define the middle layer
+            stage2_layer = layer_for_stage(lbl, "stage2")
+
+            extend_3_to_2_pts = [p['target_2'], extend_to_prev_trace(p['target_2'], edge, inner_trace_3_extend)]
+            inner_path_obj_3_extend_to_target_2 = gdstk.FlexPath(extend_3_to_2_pts, inner_trace_width+2, ends="flush", joins="round", layer=stage2_layer)
+            cell.add(inner_path_obj_3_extend_to_target_2)
+
+            # ION MILLING for Region 2 to ensure clean interface for narrow Region 3 leads
+            # layer = get_wire_layer(lbl)
+            get_ion_milling_obj(cell, p['target_2'], lbl, edge, inner_trace_3_extend, space=3, width=(inner_trace_width-4))
+
+            # inner leads from Region 2 to Region 3 -> region-3 trace geometry
+            inner_path_obj_3, _ = rsz(
+                p['target_2'],
+                p['target_3'],
+                edge,
+                inner_trace_width_3,
+                custom_sm=5,
+                custom_entry=active_entry_len_3,
+                layer=stage2_layer
+            )
+            cell.add(inner_path_obj_3)
+
+            # Inner leads from Region 3 to Region 4 -> final fine trace geometry
+            stage3_layer = layer_for_stage(lbl, "stage3")
+
+            # extend_4_to_3_pts = [p['target_3'], extend_to_prev_trace(p['target_3'], edge, inner_trace_4_extend)]
+            # inner_path_obj_4_extend_to_target_3 = gdstk.FlexPath(extend_4_to_3_pts, inner_trace_width_3+0.5, ends="flush", joins="round", layer=stage3_layer)
+            # cell.add(inner_path_obj_4_extend_to_target_3)
+
+            inner_path_obj_4, _ = rsz(
+                p['target_3'],
+                p['target_4'],
+                edge,
+                inner_trace_width_4,
+                custom_sm=2,
+                custom_entry=active_entry_len_4,
+                layer=stage3_layer
+            )
+            cell.add(inner_path_obj_4)
+
+            # overlapping
+            device_layer = layer_for_stage(lbl, "device")
+            extend_device_to_target_4_pts = extend_to_prev_trace2_half(p['target_4'], edge, inner_trace_5_extend)
+            inner_path_obj_device_extend_to_target_4 = gdstk.FlexPath(extend_device_to_target_4_pts, 0.1, ends="flush", joins="round", layer=device_layer)
+            cell.add(inner_path_obj_device_extend_to_target_4)
+
+            connection_points[p['label']] = p['target_4']
+
+        return lib, cell, connection_points, acenter, all_pads
+
+    def generate_quantum_dot_layout(self, **kwargs):
+        self.qd_params.update(kwargs)
+        self.device_lib, self.device_cell, self.device_connection_points, self.sg_width = self._create_18qd_layout_with_labels(**kwargs)
+        return self.device_lib, self.device_cell, self.device_connection_points, self.sg_width
+
+    def generate_pad_frame_layout(self, **kwargs):
+        self.pad_params.update(kwargs)
+        self.pad_lib, self.pad_cell, self.pad_connection_points, self.active_center, self.all_pads_info = self._create_rect_wire_layout(**kwargs)
+        return self.pad_lib, self.pad_cell, self.pad_connection_points, self.active_center, self.all_pads_info
+
+    def assemble_device_and_pad_frame(self):
+        if self.device_cell is None or self.pad_cell is None:
+            print("Error: Device cell or Pad cell not generated.")
+            return None, None
+
+        assembly_lib = gdstk.Library(name="ASSEMBLY", unit=1e-6, precision=1e-9)
+        assembly_cell = assembly_lib.new_cell('18DOT_FULL_ASSEMBLY')
+
+        assembly_cell.add(*self.pad_cell.get_polygons(depth=None))
+        assembly_cell.add(*self.pad_cell.get_paths(depth=None))
+        assembly_cell.add(*self.pad_cell.get_labels(depth=None))
+
+        device_polys = self.device_cell.get_polygons(depth=None)
+        device_paths = self.device_cell.get_paths(depth=None)
+        device_labels = self.device_cell.get_labels(depth=None)
+
+        bbox = self.device_cell.bounding_box()
+        if bbox is not None:
+            (min_x, min_y), (max_x, max_y) = bbox
+            cx, cy = (min_x + max_x) / 2, (min_y + max_y) / 2
+            tx, ty = self.active_center[0] - cx, self.active_center[1] - cy
+
+            for p in device_polys:
+                p.translate(tx, ty)
+            for p in device_paths:
+                p.translate(tx, ty)
+            for l in device_labels:
+                l.origin = (l.origin[0] + tx, l.origin[1] + ty)
+
+        assembly_cell.add(*device_polys)
+        assembly_cell.add(*device_paths)
+        assembly_cell.add(*device_labels)
+
+        return assembly_lib, assembly_cell
+
+    def create_gds_wire(self, pts, width=0.040, layer=5):
+        """
+        Creates a GDS wire (FlexPath) from a list of points.
+
+        Args:
+            pts: List of (x, y) coordinates defining the path.
+            width: Width of the wire in micrometers (default 0.040 = 40nm).
+            layer: GDS layer for the wire.
+        """
+        return gdstk.FlexPath(pts, width, layer=layer, ends="flush", joins="round")
+
+    def add_connection_wire(self, cell, label, width=0.040, layer=5):
+        """
+        Connects a device lead to its corresponding pad using a straight wire.
+
+        Args:
+            cell: The cell to add the wire to.
+            label: The label of the electrode to connect.
+            width: Width of the wire.
+            layer: GDS layer for the wire.
+        """
+        if self.device_connection_points is None or self.pad_connection_points is None:
+            print("Error: Connection points not generated.")
+            return None
+
+        if label not in self.device_connection_points or label not in self.pad_connection_points:
+            return None
+
+        p_pad = self.pad_connection_points[label]
+
+        bbox = self.device_cell.bounding_box()
+        if bbox is None:
+            return None
+        dev_cx, dev_cy = (bbox[0][0] + bbox[1][0]) / 2, (bbox[0][1] + bbox[1][1]) / 2
+        tx, ty = self.active_center[0] - dev_cx, self.active_center[1] - dev_cy
+        p_dev = (self.device_connection_points[label][0] + tx, self.device_connection_points[label][1] + ty)
+
+        path_pts = [p_pad, p_dev]
+        wire = self.create_gds_wire(path_pts, width=width, layer=layer)
+        cell.add(wire)
+        return wire
+
+    def visualize_and_save_pad_frame(self, lib, cell_to_show, title, gds_filename, show_plot=True):
+        print(f"--- {title} ---")
+        print(f"正在可视化: {title}...")
+        if show_plot:
+            fig, ax = plt.subplots(figsize=(12, 12), dpi=100)
+            polys = cell_to_show.get_polygons(depth=None)
+            for p in polys:
+                if p.layer == 31:
+                    color, alpha, zorder = '#f1c40f', 0.8, 5
+                elif p.layer == 30:
+                    color, alpha, zorder = '#ecf0f1', 0.2, 0
+                elif p.layer == 50:
+                    color, alpha, zorder = '#1abc9c', 0.3, 2
+                elif p.layer == 51:
+                    color, alpha, zorder = '#3498db', 0.3, 3
+                elif p.layer == 52:
+                    color, alpha, zorder = '#9b59b6', 0.3, 4
+                elif p.layer == 53:
+                    color, alpha, zorder = '#e74c3c', 0.3, 5
+                elif p.layer == 60:
+                    color, alpha, zorder = '#e67e22', 0.2, 1
+                else:
+                    continue
+                ax.add_patch(MplPolygon(p.points, closed=True, facecolor=color, alpha=alpha, edgecolor='none', zorder=zorder))
+
+            labels = cell_to_show.get_labels(depth=None)
+            for lbl in labels:
+                ax.text(lbl.origin[0], lbl.origin[1], lbl.text, fontsize=9, ha='center', va='center', color='blue', fontweight='bold', alpha=0.8)
+
+            ax.set_aspect('equal')
+            ax.set_title(title, fontsize=14)
+            bbox = cell_to_show.bounding_box()
+            if bbox:
+                (min_x, min_y), (max_x, max_y) = bbox
+                margin = (max_x - min_x) * 0.05
+                ax.set_xlim(min_x - margin, max_x + margin)
+                ax.set_ylim(min_y - margin, max_y + margin)
+            plt.tight_layout()
+            plt.show()
+
+        lib.write_gds(gds_filename)
+        print(f"GDS 文件已保存到: '{gds_filename}'\n")
+
+    def visualize_and_save_assembly(self, lib, cell_to_show, title, gds_filename, show_plot=True, zoom_factor=0.1):
+        print(f"--- {title} ---")
+        print(f"正在可视化: {title}...")
+
+        if os.path.exists(gds_filename):
+            os.remove(gds_filename)
+        lib.write_gds(gds_filename)
+        print(f"GDS 文件已保存到: '{gds_filename}'")
+
+        if not show_plot:
+            return
+
+        layer_config = {
+            3: {'color': '#87CEEB', 'alpha': 0.65, 'label': 'S/D (L3)', 'zorder': 2},
+            4: {'color': '#6baed6', 'alpha': 0.45, 'label': 'S/D middle (L4)', 'zorder': 1},
+            5: {'color': '#D3D3D3', 'alpha': 0.55, 'label': 'SG (L5)', 'zorder': 3},
+            6: {'color': '#bdbdbd', 'alpha': 0.40, 'label': 'SG middle (L6)', 'zorder': 2},
+            7: {'color': '#8A2BE2', 'alpha': 0.90, 'label': 'PG (L7)', 'zorder': 5},
+            8: {'color': '#b57edc', 'alpha': 0.45, 'label': 'PG middle (L8)', 'zorder': 4},
+            9: {'color': '#FF1493', 'alpha': 0.90, 'label': 'BG (L9)', 'zorder': 7},
+            10: {'color': '#ff6fb0', 'alpha': 0.45, 'label': 'BG middle (L10)', 'zorder': 6},
+            20: {'color': '#ecf0f1', 'alpha': 0.35, 'label': 'Pad oxide (L20)', 'zorder': 0},
+            22: {'color': '#f1c40f', 'alpha': 0.85, 'label': 'Wide metal / laser write (L22)', 'zorder': 8},
+            30: {'color': '#ecf0f1', 'alpha': 0.20, 'label': 'Substrate (L30)', 'zorder': 0},
+
+            12: {'color': '#d35400', 'alpha': 0.16, 'label': 'Al2O3 etch (L12)', 'zorder': 0},
+            16: {'color': '#7f8c8d', 'alpha': 0.35, 'label': 'Ion milling 1 (L16)', 'zorder': 1},
+            17: {'color': '#95a5a6', 'alpha': 0.32, 'label': 'Ion milling 2 (L17)', 'zorder': 1},
+            18: {'color': '#bdc3c7', 'alpha': 0.30, 'label': 'Ion milling 3 (L18)', 'zorder': 1},
+            19: {'color': '#ecf0f1', 'alpha': 0.28, 'label': 'Ion milling 4 (L19)', 'zorder': 1},
+
+        }
+
+        def draw_on_ax(ax_obj, is_zoomed=False):
+            drawn_labels = set()
+            for layer in sorted(layer_config.keys(), key=lambda x: layer_config[x]['zorder']):
+                cfg = layer_config[layer]
+                polys = cell_to_show.get_polygons(depth=None, layer=layer, datatype=0)
+                if not polys:
+                    continue
+                merged_polys = gdstk.boolean(polys, [], 'or', layer=layer)
+                for gds_poly in merged_polys:
+                    label = cfg['label'] if cfg['label'] not in drawn_labels else None
+                    ax_obj.add_patch(
+                        MplPolygon(
+                            gds_poly.points,
+                            closed=True,
+                            fill=True,
+                            facecolor=cfg['color'],
+                            edgecolor='none',
+                            alpha=cfg['alpha'],
+                            label=label,
+                            zorder=cfg['zorder']
+                        )
+                    )
+                    if label:
+                        drawn_labels.add(label)
+
+            labels = cell_to_show.get_labels(depth=None)
+            xmin, xmax = ax_obj.get_xlim()
+            ymin, ymax = ax_obj.get_ylim()
+            for lbl in labels:
+                if xmin <= lbl.origin[0] <= xmax and ymin <= lbl.origin[1] <= ymax:
+                    if is_zoomed or len(lbl.text) > 4:
+                        fs = 10 if is_zoomed else 8
+                        ax_obj.text(
+                            lbl.origin[0],
+                            lbl.origin[1],
+                            lbl.text,
+                            fontsize=fs,
+                            ha='center',
+                            va='center',
+                            color='blue',
+                            fontweight='bold',
+                            alpha=0.8
+                        )
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10), dpi=150)
+        bbox = cell_to_show.bounding_box()
+        if bbox:
+            (min_x, min_y), (max_x, max_y) = bbox
+            margin = (max_x - min_x) * 0.05
+            ax1.set_xlim(min_x - margin, max_x + margin)
+            ax1.set_ylim(min_y - margin, max_y + margin)
+
+        if self.active_center:
+            acx, acy = self.active_center
+            active_size = self.pad_params.get('active_size', 400)
+            zw = self.pad_params.get('active_width', active_size) * zoom_factor
+            zh = self.pad_params.get('active_height', active_size) * zoom_factor
+            ax2.set_xlim(acx - zw, acx + zw)
+            ax2.set_ylim(acy - zh, acy + zh)
+
+        draw_on_ax(ax1, is_zoomed=False)
+        ax1.set_aspect('equal')
+        ax1.set_title(f"{title} (Full View)")
+        draw_on_ax(ax2, is_zoomed=True)
+        ax2.set_aspect('equal')
+        ax2.set_title(f"{title} (Zoomed Center)")
+        plt.tight_layout()
+        plt.show()

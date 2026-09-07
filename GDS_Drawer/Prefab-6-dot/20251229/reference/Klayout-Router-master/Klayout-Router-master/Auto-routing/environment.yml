@@ -1,0 +1,14 @@
+name: klayout_dev
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - scikit-image
+  - matplotlib
+  # - ffmpeg
+  - ipykernel
+  - pip
+  - pip:
+      - klayout==0.30.3

@@ -1,0 +1,26 @@
+# Python 编译文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 虚拟环境
+.venv/
+venv/
+ENV/
+
+# VS Code 工作区设置
+Auto-Klayout.code-workspace
+.vscode/
+
+test_backup.gds
+.assets/*.gif
+
+./**.mp4
+
+./Notes.md
+
+**.gds
+**.lys
+!demo.gds
+!demo.lys
